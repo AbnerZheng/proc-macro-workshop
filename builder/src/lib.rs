@@ -1,13 +1,13 @@
 use proc_macro::TokenStream;
-use proc_macro2::Ident;
 
+use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Field, Fields, FieldsNamed, GenericArgument,
-    PathArguments, Type,
+    Data, DeriveInput, Field, Fields, FieldsNamed, GenericArgument,
+    LitStr, parse_macro_input, PathArguments, Type,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -103,14 +103,89 @@ fn setter_methods(fields: &FieldsNamed) -> Vec<proc_macro2::TokenStream> {
             } else {
                 inner_type_of_option(field)
             };
-            quote! {
-                 pub fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = Some(#name);
-                    self
-                 }
+            // if the filed has attribute `build`, we had add a one_at_once for this field
+            let mut each_ident: Option<String> = None;
+            for attr in &field.attrs {
+                if attr.path().is_ident("builder") {
+                    attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("each") {
+                            // each_ident = Some(meta.value()?);
+                            let value = meta.value()?;
+                            let liter: LitStr = value.parse()?;
+                            each_ident = Some(liter.value());
+                            // eprintln!("{:#?}", liter.value());
+                            Ok(())
+                        } else {
+                            Err(meta.error("unrecognized repr"))
+                        }
+                    })
+                    .unwrap();
+                }
+            }
+            match each_ident {
+                Some(ref v) if *v == name.to_string() => {
+                    let v = format_ident!("{}", v);
+                    let inner_ty = inner_type_of_vec(field);
+
+                    quote! {
+                        pub fn #v(&mut self, #name: #inner_ty) -> &mut Self {
+                            self.#name.get_or_insert(vec![]).push(#name);
+                            self
+                        }
+                    }
+                }
+                Some(ref v) if *v != name.to_string() => {
+                    let v = format_ident!("{}", v);
+                    let inner_ty = inner_type_of_vec(field);
+
+                    quote! {
+                         pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(#name);
+                            self
+                         }
+
+                        pub fn #v(&mut self, #v: #inner_ty) -> &mut Self {
+                            self.#name.get_or_insert(vec![]).push(#v);
+                            self
+                        }
+                    }
+                }
+
+                _ => {
+                    quote! {
+                         pub fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(#name);
+                            self
+                         }
+                    }
+                }
             }
         })
         .collect::<Vec<_>>()
+}
+
+fn inner_type_of_vec(field: &Field) -> Type {
+    let t = &field.ty;
+    match t {
+        Type::Path(ref type_path) => {
+            let segment = &type_path.path.segments[0];
+            assert!(segment.ident.eq("Vec"));
+            match segment.arguments {
+                PathArguments::AngleBracketed(ref angle) => match angle.args[0] {
+                    GenericArgument::Type(ref t) => t.clone(),
+                    _ => {
+                        unimplemented!()
+                    }
+                },
+                _ => {
+                    unimplemented!()
+                }
+            }
+        }
+        _ => {
+            unimplemented!()
+        }
+    }
 }
 
 fn build_method(fields: &FieldsNamed, command_ident: &Ident) -> proc_macro2::TokenStream {

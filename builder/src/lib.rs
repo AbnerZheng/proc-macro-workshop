@@ -2,7 +2,10 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, FieldsNamed};
+use syn::{
+    parse_macro_input, Data, DeriveInput, Field, Fields, FieldsNamed, GenericArgument,
+    PathArguments, Type,
+};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -31,7 +34,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let fields_def = fields_definitions(fields);
     let fields_default_value = fields_default_values(fields);
     let build_method = build_method(fields, command_ident);
-    eprintln!("{:#?}", build_method.to_string());
 
     let expand = quote! {
         use std::error::Error;
@@ -77,8 +79,14 @@ fn fields_definitions(fields_named: &FieldsNamed) -> Vec<proc_macro2::TokenStrea
         .map(|field| {
             let name = field.ident.as_ref().unwrap();
             let ty = &field.ty;
-            quote! {
-                #name: Option<#ty>,
+            if is_option(field) {
+                quote! {
+                  #name: #ty,
+                }
+            } else {
+                quote! {
+                  #name: Option<#ty>,
+                }
             }
         })
         .collect()
@@ -90,7 +98,11 @@ fn setter_methods(fields: &FieldsNamed) -> Vec<proc_macro2::TokenStream> {
         .iter()
         .map(|field| {
             let name = field.ident.as_ref().unwrap();
-            let ty = &field.ty;
+            let ty = if !is_option(field) {
+                field.ty.clone()
+            } else {
+                inner_type_of_option(field)
+            };
             quote! {
                  pub fn #name(&mut self, #name: #ty) -> &mut Self {
                     self.#name = Some(#name);
@@ -106,8 +118,14 @@ fn build_method(fields: &FieldsNamed, command_ident: &Ident) -> proc_macro2::Tok
         let name = field.ident.as_ref().unwrap();
         let err_msg = format!("field `{}` is missing", name.to_string());
 
-        quote! {
-            #name: self.#name.as_ref().ok_or(#err_msg)?.clone(),
+        if is_option(field) {
+            quote! {
+                #name: self.#name.clone(),
+            }
+        } else {
+            quote! {
+                #name: self.#name.as_ref().ok_or(#err_msg)?.clone(),
+            }
         }
     });
     quote! {
@@ -115,6 +133,43 @@ fn build_method(fields: &FieldsNamed, command_ident: &Ident) -> proc_macro2::Tok
             Ok(#command_ident{
                 #(#field_check_and_set)*
             })
+        }
+    }
+}
+
+fn is_option(field: &Field) -> bool {
+    let t = &field.ty;
+    match t {
+        Type::Path(ref type_path) => {
+            // eprintln!("{:#?}", type_path);
+            type_path.path.segments[0].ident.eq("Option")
+        }
+        _ => {
+            unimplemented!()
+        }
+    }
+}
+
+fn inner_type_of_option(field: &Field) -> Type {
+    let t = &field.ty;
+    match t {
+        Type::Path(ref type_path) => {
+            let segment = &type_path.path.segments[0];
+            assert!(segment.ident.eq("Option"));
+            match segment.arguments {
+                PathArguments::AngleBracketed(ref angle) => match angle.args[0] {
+                    GenericArgument::Type(ref t) => t.clone(),
+                    _ => {
+                        unimplemented!()
+                    }
+                },
+                _ => {
+                    unimplemented!()
+                }
+            }
+        }
+        _ => {
+            unimplemented!()
         }
     }
 }

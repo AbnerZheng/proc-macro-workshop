@@ -1,36 +1,9 @@
-// The std::process::Command builder handles args in a way that is potentially
-// more convenient than passing a full vector of args to the builder all at
-// once.
-//
-// Look for a field attribute #[builder(each = "...")] on each field. The
-// generated code may assume that fields with this attribute have the type Vec
-// and should use the word given in the string literal as the name for the
-// corresponding builder method which accepts one vector element at a time.
-//
-// In order for the compiler to know that these builder attributes are
-// associated with your macro, they must be declared at the entry point of the
-// derive macro. Otherwise the compiler will report them as unrecognized
-// attributes and refuse to compile the caller's code.
-//
-//     #[proc_macro_derive(Builder, attributes(builder))]
-//
-// These are called inert attributes. The word "inert" indicates that these
-// attributes do not correspond to a macro invocation on their own; they are
-// simply looked at by other macro invocations.
-//
-// If the new one-at-a-time builder method is given the same name as the field,
-// avoid generating an all-at-once builder method for that field because the
-// names would conflict.
-//
-//
-// Resources:
-//
-//   - Relevant syntax tree type:
-//     https://docs.rs/syn/2.0/syn/struct.Attribute.html
-
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::rust_2021::*;
+#[macro_use]
+extern crate std;
 use derive_builder::Builder;
-
-#[derive(Builder)]
 pub struct Command {
     executable: String,
     #[builder(each = "arg")]
@@ -39,7 +12,58 @@ pub struct Command {
     env: Vec<String>,
     current_dir: Option<String>,
 }
-
+use std::error::Error;
+pub struct CommandBuilder {
+    executable: Option<String>,
+    args: Option<Vec<String>>,
+    env: Option<Vec<String>>,
+    current_dir: Option<String>,
+}
+impl CommandBuilder {
+    pub fn executable(&mut self, executable: String) -> &mut Self {
+        self.executable = Some(executable);
+        self
+    }
+    pub fn args(&mut self, args: Vec<String>) -> &mut Self {
+        self.args = Some(args);
+        self
+    }
+    pub fn arg(&mut self, arg: String) -> &mut Self {
+        self.args.get_or_insert(::alloc::vec::Vec::new()).push(arg);
+        self
+    }
+    pub fn env(&mut self, env: String) -> &mut Self {
+        self.env.get_or_insert(::alloc::vec::Vec::new()).push(env);
+        self
+    }
+    pub fn current_dir(&mut self, current_dir: String) -> &mut Self {
+        self.current_dir = Some(current_dir);
+        self
+    }
+    pub fn build(&mut self) -> Result<Command, Box<dyn Error>> {
+        Ok(Command {
+            executable: self
+                .executable
+                .as_ref()
+                .ok_or("field `executable` is missing")?
+                .clone(),
+            args: self.args.as_ref().ok_or("field `args` is missing")?.clone(),
+            env: self.env.as_ref().ok_or("field `env` is missing")?.clone(),
+            current_dir: self.current_dir.clone(),
+        })
+    }
+}
+impl Command {
+    pub fn builder() -> CommandBuilder {
+        let builder = CommandBuilder {
+            executable: None,
+            args: None,
+            env: None,
+            current_dir: None,
+        };
+        builder
+    }
+}
 fn main() {
     let command = Command::builder()
         .executable("cargo".to_owned())
@@ -47,7 +71,33 @@ fn main() {
         .arg("--release".to_owned())
         .build()
         .unwrap();
-
-    assert_eq!(command.executable, "cargo");
-    assert_eq!(command.args, vec!["build", "--release"]);
+    match (&command.executable, &"cargo") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (
+        &command.args,
+        &<[_]>::into_vec(#[rustc_box] ::alloc::boxed::Box::new(["build", "--release"])),
+    ) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
 }

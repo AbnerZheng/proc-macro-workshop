@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, FieldsNamed};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -14,46 +14,29 @@ pub fn derive(input: TokenStream) -> TokenStream {
     // eprintln!("{:#?}", input.data);
     // eprintln!("{:#?}", input.span());
 
-    let fields: (Vec<_>, Vec<_>) = match input.data {
-        Data::Struct(ref data) => {
-            // eprintln!("fields: {:#?}", data.fields);
-            // eprintln!("semi_token: {:#?}", data.semi_token);
-            // eprintln!("struct_token: {:#?}", data.struct_token);
-            match data.fields {
-                Fields::Unnamed(_) | Fields::Unit => {
-                    unimplemented!()
-                }
-                Fields::Named(ref fields) => fields
-                    .named
-                    .iter()
-                    .map(|field| {
-                        let name = field.ident.as_ref().unwrap();
-                        let ty = &field.ty;
-                        let def = quote! {
-                          #name: Option<#ty>,
-                        };
-                        let default_value = quote! {
-                            #name: None,
-                        };
-                        (def, default_value)
-                    })
-                    .collect::<Vec<_>>()
-                    .iter()
-                    .cloned()
-                    .unzip(),
+    let fields = match input.data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Unnamed(_) | Fields::Unit => {
+                unimplemented!()
             }
-        }
+            Fields::Named(ref fields) => fields,
+        },
         Data::Enum(_) | Data::Union(_) => {
             unimplemented!()
         }
     };
 
-    let fields_def = fields.0;
-    let fields_default_value = fields.1;
+    let setters = setter_methods(fields);
+    let fields_def = fields_definitions(fields);
+    let fields_default_value = fields_default_values(fields);
 
     let expand = quote! {
-        pub struct #command_builder_ident{
+        pub struct #command_builder_ident {
             #(#fields_def)*
+        }
+
+        impl #command_builder_ident {
+            #(#setters)*
         }
 
         impl #input_ident{
@@ -66,4 +49,48 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     };
     TokenStream::from(expand)
+}
+
+fn fields_default_values(fields_named: &FieldsNamed) -> Vec<proc_macro2::TokenStream> {
+    fields_named
+        .named
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            quote! {
+                #name: None,
+            }
+        })
+        .collect()
+}
+
+fn fields_definitions(fields_named: &FieldsNamed) -> Vec<proc_macro2::TokenStream> {
+    fields_named
+        .named
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let ty = &field.ty;
+            quote! {
+                #name: Option<#ty>,
+            }
+        })
+        .collect()
+}
+
+fn setter_methods(fields: &FieldsNamed) -> Vec<proc_macro2::TokenStream> {
+    fields
+        .named
+        .iter()
+        .map(|field| {
+            let name = field.ident.as_ref().unwrap();
+            let ty = &field.ty;
+            quote! {
+                 fn #name(&mut self, #name: #ty) -> &mut Self {
+                    self.#name = Some(#name);
+                    self
+                 }
+            }
+        })
+        .collect::<Vec<_>>()
 }

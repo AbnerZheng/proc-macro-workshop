@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 
 use quote::quote;
-use syn::{Data, DeriveInput, Error, Expr, Field, parse_macro_input};
+use syn::{parse_macro_input, Data, DeriveInput, Error, Expr, Field};
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -42,16 +42,26 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         }
     }?;
 
-    let token = quote! {
-        impl std::fmt::Debug for #struct_ident{
+    let generics = &input.generics;
+    let type_params = generics.type_params();
+    let type_params = type_params
+        .map(|t| {
+            quote! {
+                #t: std::fmt::Debug
+            }
+        })
+        .collect::<Vec<_>>();
+    let (_, ty_generics, where_clause) = generics.split_for_impl();
+
+    Ok(quote! {
+        impl <#(#type_params),*> std::fmt::Debug for #struct_ident #ty_generics #where_clause{
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct(#struct_ident_str)
                  #(#fields)*
                  .finish()
             }
         }
-    };
-    Ok(token)
+    })
 }
 
 fn debug_attr(field: &Field) -> syn::Result<Option<Expr>> {
